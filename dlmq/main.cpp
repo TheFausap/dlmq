@@ -12,15 +12,20 @@
 #include <chrono>
 #include <thread>
 #include <cmath>
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <regex>
+#include <fmt/core.h>
 
 #define MAX 1
-#define MAXREG 254
+#define MAXREG 256
 #define REGSIZE 36
 #define PULSE 10000
 
-#define WRM(x,y) inpv=(y);addr=(x);writef=1;this_thread::sleep_for(1.96s);writef=0;
-
-#define RDM(x) this_thread::sleep_for(1s);addr=(x);readf=1;this_thread::sleep_for(2s);
+#define WRM(b,x,y) bk=b;this_thread::sleep_for(0.2s);inpv=(y);addr=(x);writef=1;this_thread::sleep_for(1.96s);writef=0;
+#define DEL(x) addr=(x);erasef=1;this_thread::sleep_for(1.96s);erasef=0;
+#define RDM(b,x) bk=b;this_thread::sleep_for(1s);addr=(x);readf=1;this_thread::sleep_for(2s);
  
 using namespace std;
  
@@ -33,20 +38,24 @@ int outv = 0;
 int inpv = 0;
 int bk = 0;
 int addr = 0;
+long ac = 0;
+
+int a[36];
+vector<int> mule;
+int acb[36];
 
 int reg[MAXREG][REGSIZE];
+
+regex regf("\\s+");
  
 // Shared queue
 queue<int> Q;
 queue<int> Q1;
-queue<int> wQ;
-queue<int> rQ;
  
 // Function declaration of all required functions
 void* producerFun(void*);
 void* add_B(void*);
 void* add_C(void*);
-void* wrmem(void*);
  
 // Getting the mutex
 pthread_mutex_t mutexx = PTHREAD_MUTEX_INITIALIZER;
@@ -80,7 +89,7 @@ void* producerFun(void*)
             pthread_mutex_unlock(&mutexx);
             return NULL;
         } else {
-            cout << ".";
+            //cout << "." << flush;
             pthread_cond_wait(&dataNotConsumed, &mutexx);
         }
         
@@ -94,7 +103,7 @@ void* producerFun(void*)
 void* add_B(void*)
 {
     int count = 0;
-//    int cdiv = 0;
+    
     while (1) {
  
         // Getting the lock on queue using mutex
@@ -105,17 +114,10 @@ void* add_B(void*)
             // Get the data from the front of queue
             int data = Q.front();
  
-            //cout << "B thread consumed: " << data << endl;
             if (data == 1) {
-//                if (cdiv == PULSE) {
-//                    count = (count < REGSIZE) ? (count + 1) : 0;
                 this_thread::sleep_for(50ms);
                 count = (count + 1) % REGSIZE;
-//                cout << count << endl;
                 Q1.push(count);
-//                    cdiv = 0;
-//                }
-//                cdiv++;
             }
  
             // Pop the consumed data from queue
@@ -127,7 +129,7 @@ void* add_B(void*)
             pthread_mutex_unlock(&mutexx);
             return NULL;
         } else {
-            cout << "C";
+            //cout << "C" << flush;
             pthread_cond_wait(&dataNotProduced, &mutexx);
         }
         
@@ -140,6 +142,7 @@ void* add_B(void*)
 void* add_C(void*)
 {
     int data = 0;
+    
     while (1) {
         // Getting the lock on queue using mutex
         pthread_mutex_lock(&mutexx);
@@ -149,16 +152,11 @@ void* add_C(void*)
  
             // Get the data from the front of queue
             data = Q1.front();
-//            cout << "Analyzing queue: " << data << inpv << writef << endl;
             if (data == addr) {
-                cout << "A" << addr;
+                cout << bk << "#A" << addr << "." << flush;
                 reg[bk][data] = (inpv & writef) ^ (reg[bk][data] & (!erasef));
-//                cout << "Reg " << reg[bk][data] << endl;
                 outv = reg[bk][data] & readf;
-//                cout << "Reading: " << outv << endl;
             }
-//                cout << "R" << readf << addr << outv << endl;
-//                printf("%d|\n",reg[0][addr]);
  
             // Pop the consumed data from queue
             Q1.pop();
@@ -170,7 +168,7 @@ void* add_C(void*)
             pthread_mutex_unlock(&mutexx);
             return NULL;
         } else {
-            cout << "R";
+            //cout << "R" << flush;
             // Wait on a condition
             pthread_cond_wait(&dataNotProduced, &mutexx);
         }
@@ -180,42 +178,157 @@ void* add_C(void*)
     }
 }
 
-int rdmem(int b, int a)
+void dec2bin(long n)
 {
-    a = a + 2;
-    int r = 0;
-    while (1) {
-        if (addr == (a)) {
-            readf = 1;
-            this_thread::sleep_for(35ms);
-            r = outv;
-            this_thread::sleep_for(35ms);
-            readf = 0;
-            return r;
-        }
+	for(int i=0;i<36;i++) a[i] = 0;
+	for(int i=0;n>0;i++) {    
+		a[35-i] = n%2;    
+		n = n/2;  
+	}
+}
+
+long bin2dec() {
+    long t = 0;
+	for (int i=0;i<36;i++) {
+		t += acb[i] * pow(2,35-i);
+	}
+	return t;
+}
+
+void sto(int b,long v)
+{
+	dec2bin(v);
+	for (int i=1;i<36;i++) {
+		WRM(b,i,a[i])
     }
 }
 
-void *wrmem(void*)
+long lda(int b)
 {
-    int ad;
-    while (1) {
-        pthread_mutex_lock(&mutexx);
- 
-        // Pop only when queue has at least 1 element
-        if (wQ.size() > 0) {
-            ad = wQ.front();
-            cout << "wrm " << ad << writef << endl;
-            reg[bk][ad] = (inpv & writef) ^ (reg[bk][ad] & (!erasef));
-            wQ.pop();
-        } else if (endp) {
-            pthread_mutex_unlock(&mutexx);
-            return NULL;
-        }
-        
-        pthread_mutex_unlock(&mutexx);
+	for(int i=0;i<36;i++) a[i] = 0;
+	for (int i=1;i<36;i++) {
+        RDM(b,i)
+        a[i]=outv;
     }
+    return bin2dec();
+}
+
+long add(int b1, int b2, int b3)
+{
+	int c = 0;
+	int s = 0;
+	int bb1 = 0;
+	int bb2 = 0;
+	
+	for(int i=0;i<REGSIZE;i++) {
+		RDM(b1,35-i)
+		bb1 = outv;
+		RDM(b2,35-i)
+		bb2 = outv;
+		s = c + bb1 + bb2;
+		if(s>=2) {
+			s=0; c=1;
+		} else { 
+			c=0;
+		}
+		WRM(b3,35-i,s)
+		acb[35-i] = s;
+	}
+	
+	if (c==1) {
+		WRM(b3,1,1)
+		acb[1] = 1;
+	}
+	
+	ac = bin2dec();
     
+    return ac;
+}
+
+int digits(int b1)
+{
+	for(int i=0;i<REGSIZE;i++) {
+		RDM(b1,i)
+		if (outv == 1) return i;
+	}
+	return 0;
+}
+
+void mul(int b1, int b2) 
+{
+	int m1 = 0;
+	int m2 = 0;
+	int m = 0;
+	int maxj = 0;
+	int treg = 0;
+	int bb = 256;
+	
+	int cf1 = digits(b1);
+	int cf2 = digits(b2);
+	
+	cout << "D" << cf1 << "." << cf2 << flush;
+	
+	for(int j=cf2;j<REGSIZE;j++) {
+		RDM(b2,j)
+		m2 = outv;
+		bb--;
+		for(int i=0;i<cf1;i++) {
+			RDM(b1,35-i)
+			m1 = outv;
+			WRM(bb,35-i-treg,m1*m2)
+		}
+		treg++;
+	}
+	
+	for (int i=0;i<REGSIZE-cf2;i=i+2) {
+		//add(255-i,255-i-1,100+i-1);
+		//mule[i] = 100+i;
+		cout << "\n" << 255-i << "+" << 255-i-1 << "->" << 100+i-1 << endl;
+	}
+	
+}
+
+void lsh(int b1, int b2, int n)
+{
+	for(int i=0;i<REGSIZE;i++) {
+		WRM(b2,i,0)
+	}
+	
+	for(int i=0;i<REGSIZE;i++) {
+		RDM(b1,i)
+		WRM(b2,35-i-n,outv)
+	}
+}
+
+void rsh(int b1, int b2, int n)
+{
+	for(int i=0;i<REGSIZE;i++) {
+		WRM(b2,i,0)
+	}
+	
+	for(int i=n+1;i<REGSIZE;i++) {
+		RDM(b1,i)
+		WRM(b2,35-i,outv)
+	}
+}
+
+void cla()
+{
+	ac=0;
+}
+
+void preg(void)
+{
+    const auto fmtstr = "R[{:03d}]: ";
+    const auto acfmt = "AC: {:09d}";
+    
+	printf("\n        0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5\n");
+	for (int j=0;j<MAXREG;j++) {
+		cout << fmt::format(fmtstr,j);
+    	for (int i=0;i<REGSIZE;i++) printf("%d ",reg[j][i]);
+    	cout << endl;
+	}
+	cout << fmt::format(acfmt,ac) << endl;
 }
  
 // Driver code
@@ -224,151 +337,62 @@ int main()
     // Declaring integers used to
     // identify the thread in the system
     pthread_t producerThread, consumerThread1, consumerThread2;
+    
+    for(int i=0;i<MAXREG;i++) {
+    	for(int j=0;j<REGSIZE;j++) {
+    		reg[i][j] = 0;
+    	}
+    }
  
     // Function to create a threads
     // (pthread_create() takes 4 arguments)
     pthread_create(&producerThread, NULL, producerFun, NULL);
     pthread_create(&consumerThread1,NULL, *add_B, NULL);
     pthread_create(&consumerThread2,NULL, *add_C, NULL);
+    
+    string filename("input.txt");
+    vector<string> lines;
+    string line;
 
-    /*
-    inpv = 1;
-    addr = 2;
-    writef = 1;
-    this_thread::sleep_for(2s);
-    writef = 0;
+    ifstream input_file(filename);
     
-    inpv = 1;
-    addr = 3;
-    writef = 1;
-    this_thread::sleep_for(2s);
-    writef = 0;
-    */
+    while (getline(input_file, line)){
+        lines.push_back(line);
+    }
     
-//    WRM(0,1)
-    WRM(1,1)
-    WRM(2,1)
-    WRM(3,1)
-    WRM(4,1)
-    WRM(5,1)
-    WRM(6,1)
-    WRM(7,1)
-    WRM(8,1)
-    WRM(9,1)
-    WRM(10,1)
-    WRM(11,1)
-    WRM(12,1)
-    WRM(13,1)
-    WRM(14,1)
-    WRM(15,1)
-    WRM(16,1)
-    WRM(17,1)
-    WRM(18,1)
-    WRM(19,1)
-    WRM(20,1)
-    WRM(21,1)
-    WRM(22,1)
-    WRM(23,1)
-    WRM(24,1)
-    WRM(25,1)
-    WRM(26,1)
-    WRM(27,1)
-    WRM(28,1)
-    WRM(29,1)
-    WRM(30,1)
-    WRM(31,1)
-    WRM(32,1)
-    WRM(33,1)
-    WRM(34,1)
-    WRM(35,1)
-    
-//    Reading
-    
-    /*
-    this_thread::sleep_for(1s);
-    addr = 2;
-    readf = 1;
-    this_thread::sleep_for(2s);
-     */
-    
-    RDM(1)
-    printf("\nOutput is %d\n", outv);
-    RDM(2)
-    printf("\nOutput is %d\n", outv);
-    RDM(3)
-    printf("\nOutput is %d\n", outv);
-    RDM(4)
-    printf("\nOutput is %d\n", outv);
-    RDM(5)
-    printf("\nOutput is %d\n", outv);
-    RDM(6)
-    printf("\nOutput is %d\n", outv);
-    RDM(7)
-    printf("\nOutput is %d\n", outv);
-    RDM(8)
-    printf("\nOutput is %d\n", outv);
-    RDM(9)
-    printf("\nOutput is %d\n", outv);
-    RDM(10)
-    printf("\nOutput is %d\n", outv);
-    RDM(11)
-    printf("\nOutput is %d\n", outv);
-    RDM(12)
-    printf("\nOutput is %d\n", outv);
-    RDM(13)
-    printf("\nOutput is %d\n", outv);
-    RDM(14)
-    printf("\nOutput is %d\n", outv);
-    RDM(15)
-    printf("\nOutput is %d\n", outv);
-    RDM(16)
-    printf("\nOutput is %d\n", outv);
-    RDM(17)
-    printf("\nOutput is %d\n", outv);
-    RDM(18)
-    printf("\nOutput is %d\n", outv);
-    RDM(19)
-    printf("\nOutput is %d\n", outv);
-    RDM(20)
-    printf("\nOutput is %d\n", outv);
-    RDM(21)
-    printf("\nOutput is %d\n", outv);
-    RDM(22)
-    printf("\nOutput is %d\n", outv);
-    RDM(23)
-    printf("\nOutput is %d\n", outv);
-    RDM(24)
-    printf("\nOutput is %d\n", outv);
-    RDM(25)
-    printf("\nOutput is %d\n", outv);
-    RDM(26)
-    printf("\nOutput is %d\n", outv);
-    RDM(27)
-    printf("\nOutput is %d\n", outv);
-    RDM(28)
-    printf("\nOutput is %d\n", outv);
-    RDM(29)
-    printf("\nOutput is %d\n", outv);
-    RDM(30)
-    printf("\nOutput is %d\n", outv);
-    RDM(31)
-    printf("\nOutput is %d\n", outv);
-    RDM(32)
-    printf("\nOutput is %d\n", outv);
-    RDM(33)
-    printf("\nOutput is %d\n", outv);
-    RDM(34)
-    printf("\nOutput is %d\n", outv);
-    RDM(35)
-    printf("\nOutput is %d\n", outv);
+    for (const auto &i : lines){
+    	sregex_token_iterator iter(i.begin(), i.end(), regf, -1);
+    	sregex_token_iterator end;
 
-//    this_thread::sleep_for(10s);
+    	vector<string> vec(iter, end);
+    	
+    	for (int i=0;i<vec.size();i++)
+    	{
+        	if (vec[i].compare("STO") == 0) {
+        		auto bb = stoi(vec[++i]);
+        		auto va = stoi(vec[++i]);
+        		cout << va << endl;
+        		sto(bb,va);
+        	} else if (vec[i].compare("ADD") == 0) {
+        		auto bb1 = stoi(vec[++i]);
+        		auto bb2 = stoi(vec[++i]);
+        		auto bb3 = stoi(vec[++i]);
+        		cout << bb1 << bb2 << bb3 << endl;
+        		add(bb1,bb2,bb3);
+        	} else if (vec[i].compare("///") == 0) {
+        		endp = 1;
+        	} else if (vec[i].compare("MUL") == 0) {
+        		auto bb1 = stoi(vec[++i]);
+        		auto bb2 = stoi(vec[++i]);
+        		cout << bb1 << bb2 << endl;
+        		mul(bb1,bb2);
+        		for(auto j : mule) cout << j << "#" << endl;
+        	}
+    	}
+    }
     
     endp = 1;
-    printf("\n0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5\n");
-    
-    for (int i=0;i<REGSIZE;i++) printf("%d ",reg[0][i]);
-//    printf("%d\n", s);
-    
+    preg();
+    input_file.close();
     return 0;
 }
